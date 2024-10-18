@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ConcurrentQueue.h"
+
 #include <chrono>
 #include <ctime>
 #include <format>
@@ -31,17 +32,23 @@ struct LevelInfo
 };
 
 const std::unordered_map<int, LevelInfo>
-    level_info = {
-        {DEBUG, {"DEBUH", "\033[32m"}}, /* 绿色 */
+    level_info{
+        {DEBUG, {"DEBUG", "\033[32m"}}, /* 绿色 */
         {INFO, {"INFO", "\033[36m"}},   /* 青色 */
         {ERROR, {"ERROR", "\033[31m"}}, /* 红色 */
         {FATAL, {"FATAL", "\033[41m"}}, /* 红色背景 */
-};
+    };
 
 inline ConcurrentQueue<std::string> g_log_que;
 
 class Logger
 {
+  private:
+    LogLevel level_;
+    std::string msg_;
+    std::source_location sl_;
+    mutable std::ostringstream time_ss_;
+
   public:
     Logger(LogLevel level, std::source_location const &sl) noexcept
         : level_(level), sl_(sl), time_ss_()
@@ -51,16 +58,31 @@ class Logger
         time_ss_ << std::put_time(std::localtime(&t_c), "%Y-%m-%d %H:%M:%S");
     }
 
-    Logger &operator<<(auto msg)
+    Logger(Logger &&other) noexcept
+        : level_(other.level_),
+          msg_(std::move(other.msg_)),
+          sl_(other.sl_),
+          time_ss_(std::move(other.time_ss_))
     {
-        log(msg);
-        return *this;
+        other.time_ss_.str("");
+        other.time_ss_.clear();
     }
 
-    void log(auto const &msg) const
+    ~Logger()
     {
-        g_log_que.push(std::format(
-            "{} {}", formatLoglevel(), formatErrorMessage(msg)));
+        if (!msg_.empty())
+        {
+            g_log_que.push(std::format(
+                "{} {}",
+                formatLoglevel(),
+                formatErrorMessage()));
+        }
+    }
+
+    Logger &operator<<(auto msg)
+    {
+        msg_ += std::format("{}", msg);
+        return *this;
     }
 
   private:
@@ -75,19 +97,15 @@ class Logger
     }
 
     // 格式化错误信息
-    std::string formatErrorMessage(auto const &msg) const
+    std::string formatErrorMessage() const
     {
         return std::format(
             "{} {}:{}> {}",
             time_ss_.str(),
             sl_.file_name(),
             sl_.line(),
-            msg);
+            msg_);
     }
-
-    LogLevel level_;
-    std::source_location sl_;
-    mutable std::ostringstream time_ss_;
 };
 
 /* 启动异步写线程 内部包含写逻辑 */
