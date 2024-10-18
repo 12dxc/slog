@@ -64,8 +64,6 @@ class Logger
           sl_(other.sl_),
           time_ss_(std::move(other.time_ss_))
     {
-        other.time_ss_.str("");
-        other.time_ss_.clear();
     }
 
     ~Logger()
