@@ -1,2 +1,1 @@
-# slog
-head only log library
+# 只有头文件的日志库
