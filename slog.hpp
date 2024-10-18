@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ConcurrentQueue.h"
-#include <array>
 #include <chrono>
 #include <ctime>
 #include <format>
@@ -12,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 
 // 日志等级
 enum LogLevel
@@ -22,20 +22,20 @@ enum LogLevel
     FATAL,
 };
 
-// 日志等级打印字符串
-const std::array<std::string_view, sizeof(LogLevel)> level_strings = {
-    "DEBUG",
-    "INFO",
-    "ERROR",
-    "FATAL",
+struct LevelInfo
+{
+    LevelInfo(std::string_view arg_str, std::string_view arg_color)
+        : str(arg_str), color(arg_color) {}
+    std::string_view str;
+    std::string_view color;
 };
 
-// 日志等级颜色
-const std::array<std::string_view, sizeof(LogLevel)> level_colors = {
-    "\033[32m", // 绿色
-    "\033[36m", // 青色
-    "\033[31m", // 红色
-    "\033[41m", // 红色背景
+const std::unordered_map<int, LevelInfo>
+    level_info = {
+        {DEBUG, {"DEBUH", "\033[32m"}}, /* 绿色 */
+        {INFO, {"INFO", "\033[36m"}},   /* 青色 */
+        {ERROR, {"ERROR", "\033[31m"}}, /* 红色 */
+        {FATAL, {"FATAL", "\033[41m"}}, /* 红色背景 */
 };
 
 inline ConcurrentQueue<std::string> g_log_que;
@@ -69,8 +69,8 @@ class Logger
     {
         return std::format(
             "{}[{}]{}",
-            level_colors.at(level_),
-            level_strings.at(level_),
+            level_info.at(level_).color,
+            level_info.at(level_).str,
             "\033[0m");
     }
 
