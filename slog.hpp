@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ConcurrentQueue.h"
 #include <array>
 #include <chrono>
 #include <ctime>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 
 // 日志等级
 enum LogLevel
@@ -36,6 +38,8 @@ const std::array<std::string_view, sizeof(LogLevel)> level_colors = {
     "\033[41m", // 红色背景
 };
 
+inline ConcurrentQueue<std::string> g_log_que;
+
 class Logger
 {
   public:
@@ -55,8 +59,8 @@ class Logger
 
     void log(auto const &msg) const
     {
-
-        std::println("{} {}", formatLoglevel(), formatErrorMessage(msg));
+        g_log_que.push(std::format(
+            "{} {}", formatLoglevel(), formatErrorMessage(msg)));
     }
 
   private:
@@ -86,10 +90,32 @@ class Logger
     mutable std::ostringstream time_ss_;
 };
 
+/* 启动异步写线程 内部包含写逻辑 */
+static void startLoggingThread()
+{
+    std::thread logging_thread(
+        []()
+        {
+            while (true)
+            {
+                std::string str_log_mes;
+                str_log_mes = g_log_que.waitPop();
+                std::println("{}", str_log_mes);
+            }
+        });
+    logging_thread.detach();
+}
+
 inline Logger SLOG(
     LogLevel level,
     std::source_location sl = std::source_location::current())
 {
+    static bool called = false;
+    if (!called)
+    {
+        startLoggingThread();
+        called = true;
+    }
     Logger logger(level, sl);
     return logger;
 }
