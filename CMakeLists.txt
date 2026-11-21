@@ -12,16 +12,26 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# 线程库（std::thread 后台消费者线程需要）
+find_package(Threads REQUIRED)
+
 # SLog library (static)
 add_library(slog STATIC slog.cpp)
 target_include_directories(slog PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(slog PUBLIC Threads::Threads)
 
 # Example executable
 add_executable(example example.cpp)
 target_link_libraries(example PRIVATE slog)
 
-# On Linux/macOS, link pthread
-if(NOT WIN32)
-    target_link_libraries(slog PRIVATE pthread)
-    target_link_libraries(example PRIVATE pthread)
-endif()
+# Tests (CTest)
+enable_testing()
+add_subdirectory(tests)
+
+# Benchmark
+add_subdirectory(bench)
+
+# Install rules (静态库 + 头文件)
+include(GNUInstallDirs)
+install(TARGETS slog ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES slog.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
