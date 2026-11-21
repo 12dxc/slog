@@ -3,7 +3,8 @@
  *
  * 特性:
  *   - 流式打印:     log_info() << "value: " << x;
- *   - 终端彩色输出（ANSI 转义码）
+ *   - 纳秒精度时间戳
+ *   - 终端彩色输出（ANSI 转义码，重定向时自动关闭）
  *   - 文件输出，自动滚动
  *   - 异步后台消费者线程
  *   - 日志永不丢失（保证模式）
@@ -15,8 +16,11 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <ostream>
 #include <source_location>
 #include <string>
 #include <type_traits>
@@ -25,12 +29,14 @@ namespace slog
 {
 
 // 日志级别
+// 注意：原枚举值 ERROR 与 <windows.h> 的 ERROR 宏冲突，已改名为 ERR
+// （日志输出中的级别文本仍为 "ERROR"）。
 enum class LogLevel : uint8_t
 {
     DEBUG,
     INFO,
     WARN,
-    ERROR,
+    ERR,
     FATAL
 };
 
@@ -118,30 +124,44 @@ class LogLine
 void set_log_level(LogLevel level);
 bool is_logged(LogLevel level);
 
+// 终端颜色全局开关：true/false 强制开/关颜色，覆盖自动检测结果；
+// 未调用时由 ConsoleWriter 自动检测（输出重定向时关闭颜色，Windows 启用 VT）
+void set_console_colors_enabled(bool enabled);
+
 // 初始化 - 终端输出
+// 注意：logger 为进程级单例，只能成功初始化一次；
+// 已初始化后再次调用会被忽略（不支持重初始化），应在任何 log_* 调用前完成。
 void initialize();
 
 // 初始化 - 文件输出
 // log_directory:     日志目录，如 "./logs/"
 // log_file_name:     文件名前缀，如 "myapp"
 // log_file_roll_size_mb: 单个文件大小上限(MB)，超过后自动滚动
+// 注意：logger 为进程级单例，只能成功初始化一次（重复调用被忽略）。
 void initialize(std::string const &log_directory, std::string const &log_file_name, uint32_t log_file_roll_size_mb);
 
 // ─── LogStream: RAII 流式日志包装器 ────────────────────────────────
-// 析构时自动将 LogLine 推入后台缓冲区
+// 活跃流：析构时自动将 LogLine 推入后台缓冲区
+// 惰性空流：日志级别未达标时由 log_* 工厂返回 —— 不构造 LogLine、
+//           不读取系统时钟，所有 operator<< 均为 no-op，析构不推送
 
 void push_logline(LogLine &&logline);
 
 class LogStream
 {
   public:
-    LogStream(LogLine &&line, bool active) : m_line(std::move(line)), m_active(active)
+    // 惰性空流：不持有 LogLine
+    LogStream() noexcept = default;
+
+    // 活跃流：接管一条已构造的 LogLine
+    explicit LogStream(LogLine &&line) : m_line(std::move(line)), m_active(true)
     {
     }
+
     ~LogStream()
     {
         if (m_active)
-            push_logline(std::move(m_line));
+            push_logline(std::move(*m_line));
     }
 
     // 移动构造：转移所有权，原对象不再推送
@@ -154,49 +174,56 @@ class LogStream
     LogStream(LogStream const &) = delete;
     LogStream &operator=(LogStream const &) = delete;
 
-    // 流式操作符：转发给内部 LogLine
+    // 流式操作符：转发给内部 LogLine；惰性空流时为 no-op
     template <typename Arg> LogStream &operator<<(Arg &&arg)
     {
-        m_line << std::forward<Arg>(arg);
+        if (m_line)
+            *m_line << std::forward<Arg>(arg);
         return *this;
     }
 
   private:
-    LogLine m_line;
-    bool m_active;
+    std::optional<LogLine> m_line;
+    bool m_active = false;
 };
 
 // ─── 流式日志 API ─────────────────────────────────────────────────
 // 用法: log_info() << "count=" << count;
+// 级别未达标时返回惰性空流，开销接近零（不读取时钟、不编码）
 
-inline LogStream log_debug(std::source_location loc = std::source_location::current())
+[[nodiscard]] inline LogStream log_debug(std::source_location loc = std::source_location::current())
 {
-    return LogStream(LogLine(LogLevel::DEBUG, loc.file_name(), loc.function_name(), loc.line()),
-                     is_logged(LogLevel::DEBUG));
+    if (!is_logged(LogLevel::DEBUG))
+        return LogStream(); // 惰性空流
+    return LogStream(LogLine(LogLevel::DEBUG, loc.file_name(), loc.function_name(), loc.line()));
 }
 
-inline LogStream log_info(std::source_location loc = std::source_location::current())
+[[nodiscard]] inline LogStream log_info(std::source_location loc = std::source_location::current())
 {
-    return LogStream(LogLine(LogLevel::INFO, loc.file_name(), loc.function_name(), loc.line()),
-                     is_logged(LogLevel::INFO));
+    if (!is_logged(LogLevel::INFO))
+        return LogStream(); // 惰性空流
+    return LogStream(LogLine(LogLevel::INFO, loc.file_name(), loc.function_name(), loc.line()));
 }
 
-inline LogStream log_warn(std::source_location loc = std::source_location::current())
+[[nodiscard]] inline LogStream log_warn(std::source_location loc = std::source_location::current())
 {
-    return LogStream(LogLine(LogLevel::WARN, loc.file_name(), loc.function_name(), loc.line()),
-                     is_logged(LogLevel::WARN));
+    if (!is_logged(LogLevel::WARN))
+        return LogStream(); // 惰性空流
+    return LogStream(LogLine(LogLevel::WARN, loc.file_name(), loc.function_name(), loc.line()));
 }
 
-inline LogStream log_error(std::source_location loc = std::source_location::current())
+[[nodiscard]] inline LogStream log_error(std::source_location loc = std::source_location::current())
 {
-    return LogStream(LogLine(LogLevel::ERROR, loc.file_name(), loc.function_name(), loc.line()),
-                     is_logged(LogLevel::ERROR));
+    if (!is_logged(LogLevel::ERR))
+        return LogStream(); // 惰性空流
+    return LogStream(LogLine(LogLevel::ERR, loc.file_name(), loc.function_name(), loc.line()));
 }
 
-inline LogStream log_fatal(std::source_location loc = std::source_location::current())
+[[nodiscard]] inline LogStream log_fatal(std::source_location loc = std::source_location::current())
 {
-    return LogStream(LogLine(LogLevel::FATAL, loc.file_name(), loc.function_name(), loc.line()),
-                     is_logged(LogLevel::FATAL));
+    if (!is_logged(LogLevel::FATAL))
+        return LogStream(); // 惰性空流
+    return LogStream(LogLine(LogLevel::FATAL, loc.file_name(), loc.function_name(), loc.line()));
 }
 
 } // namespace slog
