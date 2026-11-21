@@ -34,7 +34,13 @@ namespace slog_test
     // 阻止编译器把测量循环优化掉
     template <typename T> inline void do_not_optimize(T const &value)
     {
+#if defined(_MSC_VER) && !defined(__clang__)
+        // MSVC 不支持 GCC 风格内联汇编：用 volatile 间接读取阻止消除
+        void const *volatile sink = &value;
+        static_cast<void>(sink);
+#else
         __asm__ __volatile__("" : : "r,m"(value) : "memory");
+#endif
     }
 
     // 可捕获输出的自定义 writer（write 仅由后台消费者线程调用）
