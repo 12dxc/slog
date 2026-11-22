@@ -24,4 +24,5 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        # MSVC 为多配置生成器，ctest 需指定配置才能找到 Release 下的测试可执行文件
+        run: ctest --test-dir build --output-on-failure -C Release
